@@ -5,7 +5,7 @@ import asyncio
 import aiohttp
 
 BOT_TOKENS = [
-    "MTM5MzUyODM3NzcwNDU3OTE4NA.G6RnWc.dbj5xvl6rLE4IAsDyQaRrY8bII41v284WeU2jU",
+    "MTM5MzUyODM3NzcwNDU3OTE4NA.G4_OmG.n-GC68tsitv21SEpoFc5jpTN-eeCbUSda5Jyxk",
 ]
 
 intents = discord.Intents.all()
@@ -148,3 +148,4 @@ async def main():
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
 loop.run_until_complete(main())
+
