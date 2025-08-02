@@ -3,10 +3,9 @@ from discord.ext import commands
 import yt_dlp as youtube_dl
 import asyncio
 import aiohttp
+import os
 
-BOT_TOKENS = [
-    "MTM5MzUyODM3NzcwNDU3OTE4NA.G4_OmG.n-GC68tsitv21SEpoFc5jpTN-eeCbUSda5Jyxk",
-]
+BOT_TOKENS = os.getenv("BOT_TOKENS").split(",")
 
 intents = discord.Intents.all()
 bots = []
@@ -148,4 +147,5 @@ async def main():
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
 loop.run_until_complete(main())
+
 
