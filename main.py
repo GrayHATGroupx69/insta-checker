@@ -1,95 +1,150 @@
-import asyncio
-import os
-import configparser
-from discord.ext import tasks
 import discord
+from discord.ext import commands
+import yt_dlp as youtube_dl
+import asyncio
+import aiohttp
 
-CONFIG_FILE = "config.ini"
+BOT_TOKENS = [
+    "MTM5MzUyODM3NzcwNDU3OTE4NA.G6RnWc.dbj5xvl6rLE4IAsDyQaRrY8bII41v284WeU2jU",
+]
 
-class SelfBot(discord.Client):
-    def __init__(self, messages, user_id, delay):
-        super().__init__()
-        self.messages = messages
-        self.user_id = user_id
-        self.delay = delay
-        self.current_index = 0
-        self.send_messages = self.create_send_loop()
+intents = discord.Intents.all()
+bots = []
+voice_clients = {}
+queues = {}
+loop_flags = {}
 
-    def create_send_loop(self):
-        @tasks.loop(seconds=0.1)
-        async def loop():
-            await self.wait_until_ready()
 
-            user = self.get_user(self.user_id)
-            if user is None:
-                print(f"❌ Can't find user in cache. Make sure the user messaged you before.")
-                await self.close()
-                return
-
-            try:
-                dm = await user.create_dm()
-                message = self.messages[self.current_index]
-                await dm.send(message)
-                print(f"✅ Sent: {message}")
-                self.current_index = (self.current_index + 1) % len(self.messages)
-            except Exception as e:
-                print(f"⚠️ Error sending message: {e}")
-
-            await asyncio.sleep(self.delay)
-
-        return loop
-
-    async def on_ready(self):
-        print(f'✅ Logged in as {self.user} (ID: {self.user.id})')
-        print('--------------------------')
-        self.send_messages.start()
-
-def save_config(token, user_id):
-    config = configparser.ConfigParser()
-    config["DISCORD"] = {
-        "token": token,
-        "user_id": str(user_id)
-    }
-    with open(CONFIG_FILE, "w") as configfile:
-        config.write(configfile)
-
-def load_config():
-    config = configparser.ConfigParser()
-    if not os.path.exists(CONFIG_FILE):
-        return None
-    config.read(CONFIG_FILE)
-    if "DISCORD" in config and "token" in config["DISCORD"] and "user_id" in config["DISCORD"]:
-        token = config["DISCORD"]["token"]
-        user_id = int(config["DISCORD"]["user_id"])
-        return token, user_id
-    return None
-
-def main():
-    config_data = load_config()
-    if config_data is None:
-        token = input("Enter your Discord token: ")
-        user_id = int(input("Enter target user ID (for DMs): "))
-        save_config(token, user_id)
-        print(f"Config saved to {CONFIG_FILE}.")
+def play_next(ctx, guild_id):
+    if queues[guild_id]:
+        source = queues[guild_id].pop(0)
+        voice_clients[guild_id].play(source, after=lambda e: play_next(ctx, guild_id))
     else:
-        token, user_id = config_data
-        print(f"Loaded config from {CONFIG_FILE}.")
+        loop_flags[guild_id] = False
 
-    delay = 0.5  # سرعة الإرسال: كل نصف ثانية
 
-    if not os.path.exists("messages.txt"):
-        print("❌ messages.txt not found.")
-        return
+for token in BOT_TOKENS:
+    bot = commands.Bot(command_prefix="-", intents=intents)
+    bots.append(bot)
 
-    with open("messages.txt", "r", encoding="utf-8") as file:
-        messages = [line.strip() for line in file if line.strip()]
+    @bot.event
+    async def on_ready():
+        print(f"{bot.user.name} is ready!")
 
-    if not messages:
-        print("❌ messages.txt is empty.")
-        return
+    @bot.command()
+    async def setchannels(ctx, channel_id: int):
+        print(f"setchannels command called with channel_id: {channel_id}")
+        channel = bot.get_channel(channel_id)
+        if channel:
+            print(f"Channel found: {channel.name} (type: {type(channel)})")
+            if isinstance(channel, discord.VoiceChannel):
+                print("Attempting to connect to the voice channel...")
+                try:
+                    voice_client = await channel.connect(reconnect=True)
+                    voice_clients[ctx.guild.id] = voice_client
+                    await ctx.send(f"All bots joined channel {channel.name}")
+                except Exception as e:
+                    print(f"Error: {e}")
+                    await ctx.send("Failed to connect to the voice channel.")
+            else:
+                print("The provided channel ID is not a voice channel.")
+                await ctx.send("The provided channel ID is not a voice channel.")
+        else:
+            print("Channel not found!")
+            await ctx.send("Invalid channel ID!")
 
-    client = SelfBot(messages, user_id, delay)
-    client.run(token)
+    @bot.command()
+    async def setbotchannel(ctx, bot_mention: discord.Member, channel_id: int):
+        if bot_mention.id == bot.user.id:
+            channel = bot.get_channel(channel_id)
+            if channel:
+                voice_client = await channel.connect(reconnect=True)
+                voice_clients[ctx.guild.id] = voice_client
+                await ctx.send(f"{bot.user.name} joined channel {channel.name}")
+            else:
+                await ctx.send("Invalid channel ID!")
 
-if __name__ == "__main__":
-    main()
+    @bot.command(aliases=["p"])
+    async def play(ctx, *, query: str):
+        guild_id = ctx.guild.id
+        if guild_id not in queues:
+            queues[guild_id] = []
+        if guild_id not in loop_flags:
+            loop_flags[guild_id] = False
+
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'noplaylist': True,
+            'quiet': True,
+            'extract_flat': 'in_playlist',
+            'default_search': 'ytsearch',
+            'source_address': '0.0.0.0',
+        }
+
+        try:
+            with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(f"ytsearch1:{query}", download=False)['entries'][0]
+                url = info['url']
+                print(f"Playing URL: {url}")
+                source = discord.FFmpegPCMAudio(
+                    url,
+                    before_options="-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
+                    options="-vn"
+                )
+                queues[guild_id].append(source)
+
+            if not voice_clients[guild_id].is_playing():
+                play_next(ctx, guild_id)
+            await ctx.send(f"Added {query} to the queue!")
+        except Exception as e:
+            print(f"Error: {e}")
+            await ctx.send("Failed to play the song. Please try again.")
+
+    @bot.command(aliases=["s"])
+    async def skip(ctx):
+        guild_id = ctx.guild.id
+        if voice_clients[guild_id].is_playing():
+            voice_clients[guild_id].stop()
+            play_next(ctx, guild_id)
+            await ctx.send("Skipped the current song!")
+
+    @bot.command(aliases=["loop"])
+    async def repeat(ctx):
+        guild_id = ctx.guild.id
+        loop_flags[guild_id] = not loop_flags[guild_id]
+        await ctx.send(f"Looping is now {'enabled' if loop_flags[guild_id] else 'disabled'}.")
+
+    @bot.command()
+    async def setbotavatar(ctx, url: str):
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.read()
+                    await bot.user.edit(avatar=data)
+                    await ctx.send("Avatar updated successfully!")
+
+    @bot.command()
+    async def setbotname(ctx, *, name: str):
+        await bot.user.edit(username=name)
+        await ctx.send(f"Bot name changed to {name}")
+
+    @bot.command()
+    async def setbotbio(ctx, *, bio: str):
+        await bot.user.edit(about_me=bio)
+        await ctx.send(f"Bot bio updated to: {bio}")
+
+
+print("Starting the bot...")
+
+async def main():
+    print("Inside main function...")
+    for bot, token in zip(bots, BOT_TOKENS):
+        print(f"Starting bot with token: {token[:10]}...")
+        asyncio.create_task(bot.start(token))
+    print("All bots started.")
+    await asyncio.Event().wait()  # Keep the loop running indefinitely
+
+
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
+loop.run_until_complete(main())
