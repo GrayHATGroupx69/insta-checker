@@ -1,2 +1,4 @@
-discord.py-self
-pip install selfbot
+discord.py
+yt-dlp
+aiohttp
+pynacl
