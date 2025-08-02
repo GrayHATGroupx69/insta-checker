@@ -1,1 +1,1 @@
-worker: python [main.py](http://_vscodecontentref_/1)
+worker: python main.py
